@@ -15,7 +15,7 @@ from package.GPT import *
 
 
 class Inferer:
-    def __init__(self,model,tokenizer,device):
+    def __init__(self,model,tokenizer,device,buffer_size=400):
         self.model = model
         self.model.eval()
         self.tokenizer = tokenizer
@@ -32,13 +32,13 @@ class Inferer:
         self.init_prompt = "bonjour, je m'appelle chateaubriand. je suis un homme de mon temps, j'ai connu les voyages, la revolutions et les cataclysmes politiques et je pense que la revolution a eu un impact catastrophique sur la france. pour l'affirmer je fais appel a l'autorite du pape leon. bonjour, je m'appelle chateaubriand. je suis un homme de mon temps, j'ai connu les voyages, la revolutions et les cataclysmes politiques et je pense que la revolution a eu un impact catastrophique sur la france. pour l'affirmer je fais appel a l'autorite du pape leon. bonjour, je m'appelle chateaubriand. je suis un homme de mon temps, j'ai connu les voyages, la revolutions et les cataclysmes politiques et je pense que "
 
 
-        self.buffer_size = 10 * self.block_size
-        self.buffer_tok = self.tokenizer.encode(self.init_prompt)
+        self.buffer_size = min(buffer_size, self.block_size)
+
+        self.buffer = self.init_prompt
+        self.buffer_tok = torch.tensor(self.tokenizer.encode(self.buffer)).to(device).unsqueeze(0)
 
 
 
-
-        
 
 
     @torch.no_grad()
@@ -64,43 +64,31 @@ class Inferer:
 
     @torch.no_grad()
     def infer_N_next_tokens(self,N_tokens,input_toks, temperature=1.0,k=50):
-        word = torch.empty((N_tokens, 1), dtype=torch.long)
+        word_tok = torch.empty((1, N_tokens), dtype=torch.long)
 
         for i in range(N_tokens):
             next_token = self.infer_next_token(input_toks, temperature=temperature,k=k)
-            word[i] = next_token
-            input_toks = torch.cat((input_toks, next_token), dim=1) 
+            word_tok[:,i] = next_token
+            input_toks = torch.cat((input_toks, next_token), dim=-1) 
 
-        return word
+        return word_tok
     
 
     @torch.no_grad()
-    def update_buffer(self,N_tokens, temperature=1.0,k=50):
-        word = torch.empty((N_tokens, 1), dtype=torch.long)
+    def generate_next_word(self,N_tokens, temperature=1.0,k=50):
+        word_tok = self.infer_N_next_tokens(N_tokens,input_toks=self.buffer_tok, temperature=temperature,k=k)
 
-        for i in range(N_tokens):
-            next_token = self.infer_next_token(self.buffer_tok, temperature=temperature,k=k)
-            word[i] = next_token
-            self.buffer_tok = torch.cat((self.buffer_tok, next_token), dim=1) 
-
+        self.buffer_tok = torch.cat((self.buffer_tok, word_tok), dim=-1) 
+        word = self.tokenizer.decode(word_tok[0].tolist())
+        self.buffer += word
+        self.clean_buffer(N=self.buffer_size)
         return word
 
+    def clean_buffer(self,N):
+        self.buffer = self.buffer[-N:]
+        self.buffer_tok = self.buffer_tok[..., -min(self.buffer_tok.size(-1), N):]
+        return 
     
-
-
-    
-
-    @torch.no_grad()
-    def infer_next_word(self,max_N_tokens,input_toks, temperature=1.0,k=50):
-        word = torch.empty((max_N_tokens, 1), dtype=torch.long)
-
-        for i in range(max_N_tokens):
-            next_token = self.infer_next_token(input_toks, temperature=temperature,k=k)
-            word[i] = next_token
-            input_toks = torch.cat((input_toks, next_token), dim=1) 
-            
-        return word
-
 
 
 
